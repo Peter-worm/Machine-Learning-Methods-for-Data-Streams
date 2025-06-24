@@ -138,7 +138,7 @@ def take_tests_for_streams_on_given_model_experimental(chained_generator, all_sa
 
     change_points = {name: [] for name in pool_of_detectors}
     accuracys= {name: [] for name in pool_of_detectors}
-
+    raw_accuracy = []
     detector_name = list(pool_of_detectors.keys())[0]       
 
     i=0
@@ -159,7 +159,7 @@ def take_tests_for_streams_on_given_model_experimental(chained_generator, all_sa
                 metric.update(y, y_pred)
                 # overall_accuracy.update(y, y_pred)
                 correct = int(y_pred == y)
-
+                raw_accuracy.append(correct)
                 acc_sliding_window.append(correct)
 
                 window_accuracys.append(acc_sliding_window.get_average())
@@ -173,7 +173,7 @@ def take_tests_for_streams_on_given_model_experimental(chained_generator, all_sa
                         change_points[detector_name].append(i)
             i+=1
             accuracys[detector_name] = window_accuracys
-    return change_points,accuracys
+    return change_points,accuracys,raw_accuracy
 
 def take_tests_for_streams_on_given_model_detectors_dynamic_pool(chained_generator, all_samples_number,metric,detector_factories,model_factory,detector_offset = 5,number_of_detectors = 20): 
 
@@ -309,19 +309,32 @@ def visualize_results(detected_change_points, true_drift_points,drift_widths ,ac
     for name, points in detected_change_points.items():
         plt.figure(figsize=(10, 6))
         plt.plot(accuracys[name], label='Data')
-        
+        i =0
         for point in points:
+            if i == 0:
+                plt.axvline(x=point, color='k', linestyle='--', label='Detected Change Points')
+                i=1
+            else:
+                plt.axvline(x=point, color='k', linestyle='--')    
             # print(point)
-            plt.axvline(x=point, color='k', linestyle='--', label='Detected Change Points')
+        i = 0    
         for i, point in enumerate(true_drift_points[:-1]):
+            # if i==0:
             plt.axvline(x=point, color='r', linestyle='--', label='True Drift Point' if i == 0 else "")
             width = drift_widths[i]
-            plt.axvline(x=(point+width/2), color='g', linestyle='--',  )
+            plt.axvline(x=(point+width/2), color='g', linestyle='--',label = 'Drift width' if i == 0 else "" )
             plt.axvline(x=(point-width/2), color='g', linestyle='--',)
+            i=1
+            # else:
+            #     plt.axvline(x=point, color='r', linestyle='--', label='True Drift Point' if i == 0 else "")
+            #     width = drift_widths[i]
+            #     plt.axvline(x=(point+width/2), color='g', linestyle='--',label = 'Drift width'  )
+            #     plt.axvline(x=(point-width/2), color='g', linestyle='--',)
         # plt.legend()
         plt.title(f'Change Detection with River for {name}')
         plt.xlabel('Sample Index')
-        plt.ylabel('Value')
+        plt.ylabel('Windowed Accuracy')
+        plt.legend()
         plt.show()
 
 def visualize_results_for_fast(detected_change_points, true_drift_points,drift_widths ,accuracys):
@@ -373,3 +386,76 @@ def calculate_drift_intervals(true_drift_points, drift_widths):
         end = point + width / 2
         drift_intervals.append((start, end))
     return drift_intervals
+
+
+
+
+
+
+
+
+
+
+
+
+def take_tests_for_streams_on_given_model_experimental_real_data(stream,metric,detector_factories,model_factory,detector_offset = 5,number_of_detectors = 20): 
+
+    pool_of_detectors = {}
+
+    for name, factory in detector_factories.items():
+        pool_of_detectors[name] = [factory() for _ in range(number_of_detectors)]
+
+    change_points = {name: [] for name in pool_of_detectors}
+    accuracys= {name: [] for name in pool_of_detectors}
+    accuracy_raw = []
+    detector_name = list(pool_of_detectors.keys())[0]       
+
+    i=0
+    acc_sliding_window = DynamicSlidingWindow(100)
+    list_of_stream = []
+    for  i, (x, y) in enumerate(stream):
+        list_of_stream.append((x,y))
+    for detector_name in pool_of_detectors:
+        detectors = pool_of_detectors[detector_name]
+        active_detectors = []
+        window_accuracys = []
+        i=0
+        model = model_factory.create_model()
+        acc_sliding_window = DynamicSlidingWindow(100)
+        print(len(list_of_stream))
+        for  i, (x, y) in enumerate(list_of_stream.copy()):
+            y_pred = model.predict_one(x)
+            model.learn_one(x, y)
+            
+            if y_pred is not None:
+                metric.update(y, y_pred)
+                # overall_accuracy.update(y, y_pred)
+                correct = int(y_pred == y)
+                accuracy_raw.append(correct)
+                acc_sliding_window.append(correct)
+
+                window_accuracys.append(acc_sliding_window.get_average())
+
+                if len(active_detectors) < number_of_detectors and i% detector_offset == 0:
+                    active_detectors.append(detectors[i% number_of_detectors])
+                    # print(i)
+                for detector in active_detectors:
+                    detector.update(correct) 
+                    if detector.drift_detected:
+                        change_points[detector_name].append(i)
+            i+=1
+            accuracys[detector_name] = window_accuracys
+    return change_points,accuracys,accuracy_raw
+
+def visualize_real_stream(detected_change_points,accuracys):
+    # print(detected_change_points)
+    for name, points in detected_change_points.items():
+        plt.figure(figsize=(10, 6)) 
+        for point in points:
+            # print(point)
+            plt.axvline(x=point, color='k', linestyle='--', label='Detected Change Points')
+    plt.plot(accuracys[name], label='Data')
+    plt.title(f'Change Detection with River for {name}')
+    plt.xlabel('Sample Index')
+    plt.ylabel('Value')
+    plt.show()
